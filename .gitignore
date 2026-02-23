@@ -6,3 +6,4 @@
 .vs
 .ruff_cache
 .git
+/.idea/
