@@ -18,30 +18,19 @@ namespace esphome
 
         void EspNowFailoverComponent::recv_cb_(const esp_now_recv_info_t *info, const uint8_t *data, int len)
         {
-            ESP_LOGD(TAG, "Received ESP-NOW message: recv_cb_ called with data length %d", len);
-
-            if (instance_ == nullptr)
-                return;
+            if (instance_ == nullptr) return;
+            
             instance_->on_receive_(data, len);
         }
 
         void EspNowFailoverComponent::on_receive_(const uint8_t *data, int len)
         {
-            ESP_LOGD(TAG, "Processing received ESP-NOW message of length %d", len);
-
-            if (len != sizeof(HeartbeatMessage)) {
-                ESP_LOGW(TAG, "Received message with unexpected length: %d (expected %d)", len, sizeof(HeartbeatMessage));
-                return;
-            }
+            if (len != sizeof(HeartbeatMessage)) return;
 
             HeartbeatMessage msg;
             memcpy(&msg, data, sizeof(msg));
 
-            if (calculate_checksum_(msg) != msg.checksum)
-            {
-                ESP_LOGW(TAG, "Received message with invalid checksum. Discarding.");
-                return;
-            }
+            if (calculate_checksum_(msg) != msg.checksum) return;
 
             portENTER_CRITICAL(&this->queue_mutex_);
             if (this->receive_queue_.size() < MAX_RECEIVE_QUEUE_SIZE)
@@ -143,7 +132,7 @@ namespace esphome
 
         void EspNowFailoverComponent::log_mac_(const char *prefix, const MacAddress &mac)
         {
-            ESP_LOGI(TAG, "%s: %02X:%02X:%02X:%02X:%02X:%02X",
+            ESP_LOGD(TAG, "%s: %02X:%02X:%02X:%02X:%02X:%02X",
                      prefix, mac.addr[0], mac.addr[1], mac.addr[2],
                      mac.addr[3], mac.addr[4], mac.addr[5]);
         }
