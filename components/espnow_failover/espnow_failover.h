@@ -8,6 +8,7 @@
 #include <esp_mac.h>
 #include <cstring>
 #include <map>
+#include <vector>
 
 namespace esphome
 {
@@ -20,6 +21,8 @@ namespace esphome
         static const uint32_t FAILOVER_TIMEOUT_MS = 30000;
         static const uint8_t BROADCAST_ADDR[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
         static const uint8_t MAX_RECEIVE_QUEUE_SIZE = 10;
+        static const uint8_t CHECKSUM_SEED_MASTER = 0xAA;
+        static const uint8_t CHECKSUM_SEED_BACKUP = 0x55;
 
         struct MacAddress
         {
@@ -30,10 +33,10 @@ namespace esphome
             bool operator!=(const MacAddress &other) const { return !(*this == other); }
         };
 
-        struct HeartbeatMessage
+        struct __attribute__((packed)) HeartbeatMessage
         {
             uint8_t mac[6];
-            bool is_master;
+            uint8_t is_master;
             uint32_t uptime_sec;
             uint8_t checksum;
         };
@@ -63,10 +66,14 @@ namespace esphome
 
             std::map<MacAddress, PeerState> peers_;
 
+            std::vector<HeartbeatMessage> receive_queue_;
+            portMUX_TYPE queue_mutex_ = portMUX_INITIALIZER_UNLOCKED;
+
             static uint8_t calculate_checksum_(const HeartbeatMessage &msg);
             void send_heartbeat_();
             void evaluate_role_();
             void on_receive_(const uint8_t *data, int len);
+            void process_receive_queue_();
             void prune_dead_peers_();
             void log_mac_(const char *prefix, const MacAddress &mac);
 

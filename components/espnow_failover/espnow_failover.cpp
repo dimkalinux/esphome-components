@@ -9,7 +9,7 @@ namespace esphome
 
         uint8_t EspNowFailoverComponent::calculate_checksum_(const HeartbeatMessage &msg)
         {
-            uint8_t cs = msg.is_master ? 0xAA : 0x55;
+            uint8_t cs = msg.is_master ? CHECKSUM_SEED_MASTER : CHECKSUM_SEED_BACKUP;
             for (int i = 0; i < 6; i++)
                 cs ^= msg.mac[i];
             cs ^= (msg.uptime_sec & 0xFF);
@@ -18,8 +18,9 @@ namespace esphome
 
         void EspNowFailoverComponent::recv_cb_(const esp_now_recv_info_t *info, const uint8_t *data, int len)
         {
-            if (instance_ != nullptr)
-                instance_->on_receive_(data, len);
+            if (instance_ == nullptr)
+                return;
+            instance_->on_receive_(data, len);
         }
 
         void EspNowFailoverComponent::on_receive_(const uint8_t *data, int len)
@@ -33,19 +34,39 @@ namespace esphome
             if (calculate_checksum_(msg) != msg.checksum)
                 return;
 
-            MacAddress peer_mac{};
-            memcpy(peer_mac.addr, msg.mac, 6);
+            portENTER_CRITICAL(&this->queue_mutex_);
+            if (this->receive_queue_.size() < MAX_RECEIVE_QUEUE_SIZE)
+            {
+                this->receive_queue_.push_back(msg);
+            }
+            portEXIT_CRITICAL(&this->queue_mutex_);
+        }
 
-            if (peer_mac == this->my_mac_)
-                return;
+        void EspNowFailoverComponent::process_receive_queue_()
+        {
+            std::vector<HeartbeatMessage> local_queue;
 
-            this->peers_[peer_mac] = PeerState{msg.is_master, millis()};
+            portENTER_CRITICAL(&this->queue_mutex_);
+            local_queue.swap(this->receive_queue_);
+            portEXIT_CRITICAL(&this->queue_mutex_);
 
-            this->log_mac_("Heartbeat from", peer_mac);
-            ESP_LOGD(TAG, "  master=%s, uptime=%us, peers_known=%d",
-                     msg.is_master ? "true" : "false", msg.uptime_sec, this->peers_.size());
+            for (const auto &msg : local_queue)
+            {
+                MacAddress peer_mac{};
+                memcpy(peer_mac.addr, msg.mac, 6);
 
-            this->evaluate_role_();
+                if (peer_mac == this->my_mac_)
+                    continue;
+
+                this->peers_[peer_mac] = PeerState{msg.is_master != 0, millis()};
+
+                this->log_mac_("Heartbeat from", peer_mac);
+                ESP_LOGD(TAG, "  master=%s, uptime=%us, peers_known=%d",
+                         msg.is_master ? "true" : "false", msg.uptime_sec, this->peers_.size());
+            }
+
+            if (!local_queue.empty())
+                this->evaluate_role_();
         }
 
         void EspNowFailoverComponent::prune_dead_peers_()
@@ -122,6 +143,8 @@ namespace esphome
         {
             instance_ = this;
 
+            this->receive_queue_.reserve(MAX_RECEIVE_QUEUE_SIZE);
+
             uint8_t mac_buf[6];
             esp_read_mac(mac_buf, ESP_MAC_WIFI_STA);
             memcpy(this->my_mac_.addr, mac_buf, 6);
@@ -160,6 +183,8 @@ namespace esphome
         {
             if (!this->espnow_initialized_)
                 return;
+
+            this->process_receive_queue_();
 
             uint32_t now = millis();
 
