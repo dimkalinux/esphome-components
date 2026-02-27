@@ -1,8 +1,12 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
+import logging
 
 CODEOWNERS = ["@dimkalinux"]
+
+logging.info("Load 'espnow_failover' component from https://github.com/dimkalinux/esphome-components")
+logging.info("If you like the 'espnow_failover' component, you can support it with a star ⭐ on GitHub.")
 
 CONF_GROUP_ID = "group_id"
 
