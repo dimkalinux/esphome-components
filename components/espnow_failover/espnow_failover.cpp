@@ -7,9 +7,21 @@ namespace esphome
         EspNowFailoverComponent *EspNowFailoverComponent::instance_ = nullptr;
         EspNowFailoverComponent *EspNowFailoverComponent::instance() { return instance_; }
 
+        uint16_t EspNowFailoverComponent::hash_group_id_(const std::string &group_id)
+        {
+            uint16_t hash = 0x1505;
+            for (char c : group_id)
+            {
+                hash = ((hash << 5) + hash) ^ static_cast<uint8_t>(c);
+            }
+            return hash;
+        }
+
         uint8_t EspNowFailoverComponent::calculate_checksum_(const HeartbeatMessage &msg)
         {
             uint8_t cs = msg.is_master ? CHECKSUM_SEED_MASTER : CHECKSUM_SEED_BACKUP;
+            cs ^= (msg.group_id & 0xFF);
+            cs ^= ((msg.group_id >> 8) & 0xFF);
             for (int i = 0; i < 6; i++)
                 cs ^= msg.mac[i];
             cs ^= (msg.uptime_sec & 0xFF);
@@ -29,6 +41,8 @@ namespace esphome
 
             HeartbeatMessage msg;
             memcpy(&msg, data, sizeof(msg));
+
+            if (msg.group_id != this->group_id_hash_) return;
 
             if (calculate_checksum_(msg) != msg.checksum) return;
 
@@ -120,6 +134,7 @@ namespace esphome
         void EspNowFailoverComponent::send_heartbeat_()
         {
             HeartbeatMessage msg{};
+            msg.group_id = this->group_id_hash_;
             memcpy(msg.mac, this->my_mac_.addr, 6);
             msg.is_master = this->i_am_master_;
             msg.uptime_sec = millis() / 1000;
@@ -196,7 +211,8 @@ namespace esphome
             this->publish_is_master_state_();
             this->publish_peer_count_();
 
-            ESP_LOGI(TAG, "ESP-NOW Failover initialized. Starting as MASTER (no peers yet).");
+            ESP_LOGI(TAG, "ESP-NOW Failover initialized (group_id='%s', hash=0x%04X). Starting as MASTER (no peers yet).",
+                     this->group_id_.c_str(), this->group_id_hash_);
         }
 
         void EspNowFailoverComponent::loop()

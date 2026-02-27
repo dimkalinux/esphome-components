@@ -14,7 +14,7 @@ CONF_PEER_COUNT = "peer_count"
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(CONF_ESPNOW_FAILOVER_ID): cv.use_id(EspNowFailoverComponent),
-        cv.Required(CONF_PEER_COUNT): sensor.sensor_schema(
+        cv.Optional(CONF_PEER_COUNT): sensor.sensor_schema(
             icon=ICON_COUNTER,
             accuracy_decimals=0,
             state_class=STATE_CLASS_MEASUREMENT,

@@ -16,6 +16,7 @@ Multiple ESP32 nodes communicate over ESP-NOW via periodic heartbeats. The node 
 - Deterministic master election based on lowest MAC address
 - Automatic failover when the master becomes unreachable
 - Zero configuration — no hardcoded addresses or roles
+- Multiple independent failover groups on the same network via configurable `group_id`
 
 #### Usage
 
@@ -28,6 +29,7 @@ external_components:
 
 espnow_failover:
   id: failover
+  group_id: "pump"
 
 binary_sensor:
   - platform: espnow_failover
@@ -40,17 +42,19 @@ sensor:
       name: "Peer Count"
 ```
 
-Deploy the same configuration to two or more ESP32 devices. The component will handle role assignment automatically.
+Deploy the same configuration to two or more ESP32 devices. All nodes that should participate in the same failover group **must use the same `group_id`**. Nodes with different group IDs will ignore each other.
 
 #### Configuration Variables
 
-This component currently has no user-configurable options beyond the default ESPHome component settings.
+| Name | Type | Description |
+|------|------|-------------|
+| `group_id` | **Required**, `string` | A string identifier (2–8 characters) for the failover group. Only nodes with the same `group_id` will discover each other and participate in master election. |
 
 #### Binary Sensor
 
 | Name | Description |
 |------|-------------|
-| `is_master` | **Required.** `true` when this node is the elected master, `false` when it is a backup. Uses `connectivity` device class. |
+| `is_master` | **Optional.** `true` when this node is the elected master, `false` when it is a backup. Uses `connectivity` device class. |
 
 All options from [Binary Sensor](https://esphome.io/components/binary_sensor/) are supported.
 
@@ -58,7 +62,7 @@ All options from [Binary Sensor](https://esphome.io/components/binary_sensor/) a
 
 | Name | Description |
 |------|-------------|
-| `peer_count` | **Required.** The number of currently known live peers (excluding self). |
+| `peer_count` | **Optional.** The number of currently known live peers (excluding self). |
 
 All options from [Sensor](https://esphome.io/components/sensor/) are supported.
 
@@ -76,6 +80,7 @@ You can also use the component's `is_master()` method directly in ESPHome lambda
 ```yaml
 espnow_failover:
   id: failover
+  group_id: "pump"
 
 switch:
   - platform: template

@@ -14,6 +14,7 @@
 #include <esp_mac.h>
 #include <cstring>
 #include <map>
+#include <string>
 #include <vector>
 
 namespace esphome
@@ -41,6 +42,7 @@ namespace esphome
 
         struct __attribute__((packed)) HeartbeatMessage
         {
+            uint16_t group_id;
             uint8_t mac[6];
             uint8_t is_master;
             uint32_t uptime_sec;
@@ -57,6 +59,8 @@ namespace esphome
         {
         public:
             bool is_master() const { return this->i_am_master_; }
+
+            void set_group_id(const std::string &group_id) { this->group_id_ = group_id; this->group_id_hash_ = hash_group_id_(group_id); }
 
 #ifdef USE_BINARY_SENSOR
             void set_is_master_binary_sensor(binary_sensor::BinarySensor *sensor) { this->is_master_binary_sensor_ = sensor; }
@@ -80,6 +84,8 @@ namespace esphome
 #endif
 
             MacAddress my_mac_{};
+            std::string group_id_{};
+            uint16_t group_id_hash_{0};
             bool i_am_master_{false};
             uint32_t last_heartbeat_sent_ms_{0};
             bool espnow_initialized_{false};
@@ -90,6 +96,7 @@ namespace esphome
             portMUX_TYPE queue_mutex_ = portMUX_INITIALIZER_UNLOCKED;
 
             static uint8_t calculate_checksum_(const HeartbeatMessage &msg);
+            static uint16_t hash_group_id_(const std::string &group_id);
             void send_heartbeat_();
             void evaluate_role_();
             void on_receive_(const uint8_t *data, int len);

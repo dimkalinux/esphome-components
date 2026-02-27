@@ -13,7 +13,7 @@ CONF_IS_MASTER = "is_master"
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(CONF_ESPNOW_FAILOVER_ID): cv.use_id(EspNowFailoverComponent),
-        cv.Required(CONF_IS_MASTER): binary_sensor.binary_sensor_schema(
+        cv.Optional(CONF_IS_MASTER): binary_sensor.binary_sensor_schema(
             device_class=DEVICE_CLASS_CONNECTIVITY,
         ),
     }
