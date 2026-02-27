@@ -7,6 +7,18 @@ namespace esphome
         EspNowFailoverComponent *EspNowFailoverComponent::instance_ = nullptr;
         EspNowFailoverComponent *EspNowFailoverComponent::instance() { return instance_; }
 
+        uint8_t EspNowFailoverComponent::calculate_checksum_(const HeartbeatMessage &msg)
+        {
+            uint8_t cs = msg.is_master ? CHECKSUM_SEED_MASTER : CHECKSUM_SEED_BACKUP;
+            cs ^= (msg.group_id & 0xFF);
+            cs ^= ((msg.group_id >> 8) & 0xFF);
+
+            for (int i = 0; i < 6; i++)
+                cs ^= msg.mac[i];
+            cs ^= (msg.uptime_sec & 0xFF);
+            return cs;
+        }
+
         uint16_t EspNowFailoverComponent::hash_group_id_(const std::string &group_id)
         {
             uint16_t hash = 0x1505;
@@ -17,21 +29,10 @@ namespace esphome
             return hash;
         }
 
-        uint8_t EspNowFailoverComponent::calculate_checksum_(const HeartbeatMessage &msg)
-        {
-            uint8_t cs = msg.is_master ? CHECKSUM_SEED_MASTER : CHECKSUM_SEED_BACKUP;
-            cs ^= (msg.group_id & 0xFF);
-            cs ^= ((msg.group_id >> 8) & 0xFF);
-            for (int i = 0; i < 6; i++)
-                cs ^= msg.mac[i];
-            cs ^= (msg.uptime_sec & 0xFF);
-            return cs;
-        }
-
         void EspNowFailoverComponent::recv_cb_(const esp_now_recv_info_t *info, const uint8_t *data, int len)
         {
             if (instance_ == nullptr) return;
-            
+
             instance_->on_receive_(data, len);
         }
 
@@ -43,7 +44,6 @@ namespace esphome
             memcpy(&msg, data, sizeof(msg));
 
             if (msg.group_id != this->group_id_hash_) return;
-
             if (calculate_checksum_(msg) != msg.checksum) return;
 
             portENTER_CRITICAL(&this->queue_mutex_);
@@ -80,7 +80,6 @@ namespace esphome
             if (!local_queue.empty())
             {
                 this->evaluate_role_();
-                this->publish_peer_count_();
             }
         }
 
@@ -120,6 +119,7 @@ namespace esphome
             {
                 this->i_am_master_ = should_be_master;
                 this->publish_is_master_state_();
+
                 if (should_be_master)
                 {
                     this->log_mac_("Lowest MAC is mine — becoming MASTER", this->my_mac_);
@@ -151,18 +151,8 @@ namespace esphome
 
         void EspNowFailoverComponent::publish_is_master_state_()
         {
-#ifdef USE_BINARY_SENSOR
             if (this->is_master_binary_sensor_ != nullptr)
                 this->is_master_binary_sensor_->publish_state(this->i_am_master_);
-#endif
-        }
-
-        void EspNowFailoverComponent::publish_peer_count_()
-        {
-#ifdef USE_SENSOR
-            if (this->peer_count_sensor_ != nullptr)
-                this->peer_count_sensor_->publish_state(this->peers_.size());
-#endif
         }
 
         void EspNowFailoverComponent::log_mac_(const char *prefix, const MacAddress &mac)
@@ -209,10 +199,9 @@ namespace esphome
             this->espnow_initialized_ = true;
             this->last_heartbeat_sent_ms_ = millis();
             this->publish_is_master_state_();
-            this->publish_peer_count_();
 
             ESP_LOGI(TAG, "ESP-NOW Failover initialized (group_id='%s', hash=0x%04X). Starting as MASTER (no peers yet).",
-                     this->group_id_.c_str(), this->group_id_hash_);
+                                this->group_id_.c_str(), this->group_id_hash_);
         }
 
         void EspNowFailoverComponent::loop()
@@ -227,7 +216,6 @@ namespace esphome
             if ((now - this->last_heartbeat_sent_ms_) >= HEARTBEAT_INTERVAL_MS)
             {
                 this->evaluate_role_();
-                this->publish_peer_count_();
                 this->send_heartbeat_();
                 this->last_heartbeat_sent_ms_ = now;
             }
@@ -235,4 +223,3 @@ namespace esphome
 
     }
 }
-

@@ -26,4 +26,3 @@ async def to_code(config):
     if is_master_config := config.get(CONF_IS_MASTER):
         sens = await binary_sensor.new_binary_sensor(is_master_config)
         cg.add(parent.set_is_master_binary_sensor(sens))
-

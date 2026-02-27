@@ -35,11 +35,6 @@ binary_sensor:
   - platform: espnow_failover
     is_master:
       name: "Is Master"
-
-sensor:
-  - platform: espnow_failover
-    peer_count:
-      name: "Peer Count"
 ```
 
 Deploy the same configuration to two or more ESP32 devices. All nodes that should participate in the same failover group **must use the same `group_id`**. Nodes with different group IDs will ignore each other.
@@ -57,14 +52,6 @@ Deploy the same configuration to two or more ESP32 devices. All nodes that shoul
 | `is_master` | **Optional.** `true` when this node is the elected master, `false` when it is a backup. Uses `connectivity` device class. |
 
 All options from [Binary Sensor](https://esphome.io/components/binary_sensor/) are supported.
-
-#### Sensor
-
-| Name | Description |
-|------|-------------|
-| `peer_count` | **Optional.** The number of currently known live peers (excluding self). |
-
-All options from [Sensor](https://esphome.io/components/sensor/) are supported.
 
 #### How It Works
 
@@ -96,4 +83,3 @@ switch:
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
