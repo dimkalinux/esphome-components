@@ -27,6 +27,17 @@ external_components:
     components: [espnow_failover]
 
 espnow_failover:
+  id: failover
+
+binary_sensor:
+  - platform: espnow_failover
+    is_master:
+      name: "Is Master"
+
+sensor:
+  - platform: espnow_failover
+    peer_count:
+      name: "Peer Count"
 ```
 
 Deploy the same configuration to two or more ESP32 devices. The component will handle role assignment automatically.
@@ -34,6 +45,22 @@ Deploy the same configuration to two or more ESP32 devices. The component will h
 #### Configuration Variables
 
 This component currently has no user-configurable options beyond the default ESPHome component settings.
+
+#### Binary Sensor
+
+| Name | Description |
+|------|-------------|
+| `is_master` | **Required.** `true` when this node is the elected master, `false` when it is a backup. Uses `connectivity` device class. |
+
+All options from [Binary Sensor](https://esphome.io/components/binary_sensor/) are supported.
+
+#### Sensor
+
+| Name | Description |
+|------|-------------|
+| `peer_count` | **Required.** The number of currently known live peers (excluding self). |
+
+All options from [Sensor](https://esphome.io/components/sensor/) are supported.
 
 #### How It Works
 
@@ -44,17 +71,21 @@ This component currently has no user-configurable options beyond the default ESP
 
 #### Checking Role in Lambdas
 
-You can use the component's `is_master()` method in ESPHome lambdas:
+You can also use the component's `is_master()` method directly in ESPHome lambdas:
 
 ```yaml
-binary_sensor:
-  - platform: template
-    name: "Is Master"
-    lambda: |-
-      return id(failover).is_master();
-
 espnow_failover:
   id: failover
+
+switch:
+  - platform: template
+    name: "Master-only Switch"
+    turn_on_action:
+      - if:
+          condition:
+            lambda: 'return id(failover).is_master();'
+          then:
+            - logger.log: "I am master, executing action"
 ```
 
 ## License

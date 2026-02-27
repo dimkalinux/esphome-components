@@ -64,7 +64,10 @@ namespace esphome
             }
 
             if (!local_queue.empty())
+            {
                 this->evaluate_role_();
+                this->publish_peer_count_();
+            }
         }
 
         void EspNowFailoverComponent::prune_dead_peers_()
@@ -102,6 +105,7 @@ namespace esphome
             if (should_be_master != this->i_am_master_)
             {
                 this->i_am_master_ = should_be_master;
+                this->publish_is_master_state_();
                 if (should_be_master)
                 {
                     this->log_mac_("Lowest MAC is mine — becoming MASTER", this->my_mac_);
@@ -128,6 +132,22 @@ namespace esphome
             } else {
                 ESP_LOGD(TAG, "Heartbeat sent. I am %s", this->i_am_master_ ? "MASTER" : "BACKUP");
             }
+        }
+
+        void EspNowFailoverComponent::publish_is_master_state_()
+        {
+#ifdef USE_BINARY_SENSOR
+            if (this->is_master_binary_sensor_ != nullptr)
+                this->is_master_binary_sensor_->publish_state(this->i_am_master_);
+#endif
+        }
+
+        void EspNowFailoverComponent::publish_peer_count_()
+        {
+#ifdef USE_SENSOR
+            if (this->peer_count_sensor_ != nullptr)
+                this->peer_count_sensor_->publish_state(this->peers_.size());
+#endif
         }
 
         void EspNowFailoverComponent::log_mac_(const char *prefix, const MacAddress &mac)
@@ -173,6 +193,8 @@ namespace esphome
 
             this->espnow_initialized_ = true;
             this->last_heartbeat_sent_ms_ = millis();
+            this->publish_is_master_state_();
+            this->publish_peer_count_();
 
             ESP_LOGI(TAG, "ESP-NOW Failover initialized. Starting as MASTER (no peers yet).");
         }
@@ -189,6 +211,7 @@ namespace esphome
             if ((now - this->last_heartbeat_sent_ms_) >= HEARTBEAT_INTERVAL_MS)
             {
                 this->evaluate_role_();
+                this->publish_peer_count_();
                 this->send_heartbeat_();
                 this->last_heartbeat_sent_ms_ = now;
             }

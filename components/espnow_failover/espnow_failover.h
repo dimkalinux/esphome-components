@@ -3,6 +3,12 @@
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#ifdef USE_BINARY_SENSOR
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#endif
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_mac.h>
@@ -52,6 +58,13 @@ namespace esphome
         public:
             bool is_master() const { return this->i_am_master_; }
 
+#ifdef USE_BINARY_SENSOR
+            void set_is_master_binary_sensor(binary_sensor::BinarySensor *sensor) { this->is_master_binary_sensor_ = sensor; }
+#endif
+#ifdef USE_SENSOR
+            void set_peer_count_sensor(sensor::Sensor *sensor) { this->peer_count_sensor_ = sensor; }
+#endif
+
             void setup() override;
             void loop() override;
             float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
@@ -59,6 +72,13 @@ namespace esphome
             static EspNowFailoverComponent *instance();
 
         protected:
+#ifdef USE_BINARY_SENSOR
+            binary_sensor::BinarySensor *is_master_binary_sensor_{nullptr};
+#endif
+#ifdef USE_SENSOR
+            sensor::Sensor *peer_count_sensor_{nullptr};
+#endif
+
             MacAddress my_mac_{};
             bool i_am_master_{false};
             uint32_t last_heartbeat_sent_ms_{0};
@@ -76,6 +96,8 @@ namespace esphome
             void process_receive_queue_();
             void prune_dead_peers_();
             void log_mac_(const char *prefix, const MacAddress &mac);
+            void publish_is_master_state_();
+            void publish_peer_count_();
 
             static EspNowFailoverComponent *instance_;
             static void recv_cb_(const esp_now_recv_info_t *info, const uint8_t *data, int len);
