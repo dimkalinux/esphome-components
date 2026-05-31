@@ -33,6 +33,14 @@ namespace esphome
 
         static const uint32_t HEARTBEAT_INTERVAL_MS = 10000;
         static const uint32_t FAILOVER_TIMEOUT_MS = 30000;
+        // After the socket is ready, listen this long before we are allowed to act
+        // as master. Prevents a split-brain double-action at boot when several
+        // devices start at the same time (e.g. power restored simultaneously).
+        static const uint32_t STARTUP_HOLD_MS = 3000;
+        // When we discover a brand-new peer, answer with a heartbeat (instead of
+        // waiting up to HEARTBEAT_INTERVAL_MS) so it learns about us within a
+        // round-trip — but no more often than this, to avoid reply storms.
+        static const uint32_t REPLY_MIN_GAP_MS = 1000;
         static const uint8_t CHECKSUM_SEED_MASTER = 0xAA;
         static const uint8_t CHECKSUM_SEED_BACKUP = 0x55;
 
@@ -63,7 +71,7 @@ namespace esphome
         class UdpFailoverComponent : public Component
         {
         public:
-            bool is_master() const { return this->i_am_master_; }
+            bool is_master() const { return this->active_ && this->i_am_master_; }
             void set_group_id(const std::string &group_id) { this->group_id_ = group_id; this->group_id_hash_ = hash_group_id_(group_id); }
             void set_multicast_address(const std::string &address) { this->multicast_address_ = address; }
             void set_port(uint16_t port) { this->port_ = port; }
@@ -84,9 +92,13 @@ namespace esphome
             std::string multicast_address_{};
             uint16_t port_{0};
             bool i_am_master_{false};
+            bool active_{false};
             uint32_t last_heartbeat_sent_ms_{0};
             uint32_t last_init_attempt_ms_{0};
+            uint32_t socket_ready_ms_{0};
             bool initialized_{false};
+
+            bool effective_master_() const { return this->active_ && this->i_am_master_; }
 
             std::map<MacAddress, PeerState> peers_;
 
@@ -103,7 +115,7 @@ namespace esphome
 
             void send_heartbeat_();
             void receive_packets_();
-            void handle_message_(const HeartbeatMessage &msg);
+            bool handle_message_(const HeartbeatMessage &msg);
             void evaluate_role_();
             void prune_dead_peers_();
             void log_mac_(const char *prefix, const MacAddress &mac);

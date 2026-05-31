@@ -31,20 +31,22 @@ namespace esphome
             return hash;
         }
 
-        void UdpFailoverComponent::handle_message_(const HeartbeatMessage &msg)
+        bool UdpFailoverComponent::handle_message_(const HeartbeatMessage &msg)
         {
             MacAddress peer_mac{};
             memcpy(peer_mac.addr, msg.mac, 6);
 
             // Ignore our own heartbeat (e.g. multicast loopback).
             if (peer_mac == this->my_mac_)
-                return;
+                return false;
 
+            bool is_new = this->peers_.find(peer_mac) == this->peers_.end();
             this->peers_[peer_mac] = PeerState{msg.is_master != 0, millis()};
 
-            this->log_mac_("Heartbeat from", peer_mac);
+            this->log_mac_(is_new ? "New peer" : "Heartbeat from", peer_mac);
             ESP_LOGD(TAG, "  master=%s, uptime=%us, peers_known=%d",
                      msg.is_master ? "true" : "false", msg.uptime_sec, this->peers_.size());
+            return is_new;
         }
 
         void UdpFailoverComponent::prune_dead_peers_()
@@ -98,7 +100,7 @@ namespace esphome
         void UdpFailoverComponent::publish_is_master_state_()
         {
             if (this->is_master_binary_sensor_ != nullptr)
-                this->is_master_binary_sensor_->publish_state(this->i_am_master_);
+                this->is_master_binary_sensor_->publish_state(this->effective_master_());
         }
 
         void UdpFailoverComponent::log_mac_(const char *prefix, const MacAddress &mac)
@@ -113,12 +115,13 @@ namespace esphome
             get_mac_address_raw(this->my_mac_.addr);
             this->log_mac_("My MAC", this->my_mac_);
 
-            // Assume master until we hear a peer with a lower MAC. The socket is
-            // opened lazily in loop() once the network is connected.
-            this->i_am_master_ = true;
+            // Stay inactive (neither master nor acting) until the socket is ready
+            // and the startup hold-down has elapsed, so we never act before
+            // hearing any peer. The socket is opened lazily in loop() once the
+            // network is connected.
             this->publish_is_master_state_();
 
-            ESP_LOGI(TAG, "UDP Failover configured (group_id='%s', hash=0x%04X, group=%s:%u). Starting as MASTER (no peers yet).",
+            ESP_LOGI(TAG, "UDP Failover configured (group_id='%s', hash=0x%04X, group=%s:%u). Listening before electing.",
                      this->group_id_.c_str(), this->group_id_hash_, this->multicast_address_.c_str(), this->port_);
         }
 
@@ -181,6 +184,7 @@ namespace esphome
         void UdpFailoverComponent::receive_packets_()
         {
             bool received_any = false;
+            bool discovered_new = false;
             HeartbeatMessage msg;
 
             for (;;)
@@ -195,12 +199,19 @@ namespace esphome
                 if (calculate_checksum_(msg) != msg.checksum)
                     continue;
 
-                this->handle_message_(msg);
+                if (this->handle_message_(msg))
+                    discovered_new = true;
                 received_any = true;
             }
 
             if (received_any)
                 this->evaluate_role_();
+
+            // Answer a newly-discovered peer promptly so it learns about us within
+            // a round-trip instead of waiting up to one heartbeat interval. The gap
+            // guard stops two devices from echoing each other indefinitely.
+            if (discovered_new && (millis() - this->last_heartbeat_sent_ms_) >= REPLY_MIN_GAP_MS)
+                this->send_heartbeat_();
         }
 
         void UdpFailoverComponent::send_heartbeat_()
@@ -222,6 +233,7 @@ namespace esphome
             {
                 ESP_LOGD(TAG, "Heartbeat sent. I am %s", this->i_am_master_ ? "MASTER" : "BACKUP");
             }
+            this->last_heartbeat_sent_ms_ = millis();
         }
 
         void UdpFailoverComponent::loop()
@@ -239,18 +251,32 @@ namespace esphome
                     return;
 
                 this->initialized_ = true;
-                this->last_heartbeat_sent_ms_ = millis();
+                this->socket_ready_ms_ = millis();
                 ESP_LOGI(TAG, "UDP Failover socket ready on %s:%u", this->multicast_address_.c_str(), this->port_);
+
+                // Announce ourselves immediately so peers learn about us right away
+                // instead of after the first interval.
+                this->send_heartbeat_();
             }
 
             this->receive_packets_();
 
             uint32_t now = millis();
+
+            // Stay passive until we have listened for the hold-down window, then
+            // commit to the role we elected from whatever peers we heard.
+            if (!this->active_ && (now - this->socket_ready_ms_) >= STARTUP_HOLD_MS)
+            {
+                this->active_ = true;
+                this->evaluate_role_();
+                this->publish_is_master_state_();
+                ESP_LOGI(TAG, "Startup hold elapsed — now active as %s", this->effective_master_() ? "MASTER" : "BACKUP");
+            }
+
             if ((now - this->last_heartbeat_sent_ms_) >= HEARTBEAT_INTERVAL_MS)
             {
                 this->evaluate_role_();
                 this->send_heartbeat_();
-                this->last_heartbeat_sent_ms_ = now;
             }
         }
 #else  // !USE_UDP_FAILOVER_SOCKETS
