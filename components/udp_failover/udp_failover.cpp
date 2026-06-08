@@ -181,6 +181,38 @@ namespace esphome
             return true;
         }
 
+        void UdpFailoverComponent::rejoin_multicast_()
+        {
+            if (this->socket_ == nullptr)
+                return;
+
+            struct ip_mreq imreq {};
+            imreq.imr_interface.s_addr = ESPHOME_INADDR_ANY;
+            if (inet_aton(this->multicast_address_.c_str(), &imreq.imr_multiaddr) == 0)
+                return;
+
+            // Drop then re-add so lwIP emits a fresh, unsolicited membership
+            // report. A bare re-add is a no-op when the group is already joined,
+            // which would not refresh the AP's snooping entry.
+            this->socket_->setsockopt(IPPROTO_IP, IP_DROP_MEMBERSHIP, &imreq, sizeof(imreq));
+            if (this->socket_->setsockopt(IPPROTO_IP, IP_ADD_MEMBERSHIP, &imreq, sizeof(imreq)) < 0)
+                ESP_LOGW(TAG, "Multicast re-join failed: errno %d", errno);
+            else
+                ESP_LOGD(TAG, "Multicast membership refreshed for %s", this->multicast_address_.c_str());
+        }
+
+        void UdpFailoverComponent::close_socket_()
+        {
+            this->socket_ = nullptr;  // unique_ptr dtor closes the fd
+            this->initialized_ = false;
+            // Re-listen through the startup hold before acting again, and forget
+            // peers we can no longer hear, so a reconnect never resumes as a
+            // stale master.
+            this->active_ = false;
+            this->peers_.clear();
+            this->publish_is_master_state_();
+        }
+
         void UdpFailoverComponent::receive_packets_()
         {
             bool received_any = false;
@@ -238,6 +270,15 @@ namespace esphome
 
         void UdpFailoverComponent::loop()
         {
+            // Tear the socket down on network loss so a reconnect rebuilds it and
+            // re-joins the multicast group. A stale socket kept across a WiFi drop
+            // silently stops receiving (and its membership is gone anyway).
+            if (this->initialized_ && !network::is_connected())
+            {
+                ESP_LOGW(TAG, "Network lost — closing socket, will re-init on reconnect");
+                this->close_socket_();
+            }
+
             if (!this->initialized_)
             {
                 uint32_t now = millis();
@@ -252,6 +293,7 @@ namespace esphome
 
                 this->initialized_ = true;
                 this->socket_ready_ms_ = millis();
+                this->last_rejoin_ms_ = this->socket_ready_ms_;
                 ESP_LOGI(TAG, "UDP Failover socket ready on %s:%u", this->multicast_address_.c_str(), this->port_);
 
                 // Announce ourselves immediately so peers learn about us right away
@@ -262,6 +304,14 @@ namespace esphome
             this->receive_packets_();
 
             uint32_t now = millis();
+
+            // Keep the AP's IGMP-snooping entry fresh so the group keeps being
+            // forwarded to us even with no querier on the segment.
+            if ((now - this->last_rejoin_ms_) >= MEMBERSHIP_REJOIN_MS)
+            {
+                this->rejoin_multicast_();
+                this->last_rejoin_ms_ = now;
+            }
 
             // Stay passive until we have listened for the hold-down window, then
             // commit to the role we elected from whatever peers we heard.

@@ -41,6 +41,11 @@ namespace esphome
         // waiting up to HEARTBEAT_INTERVAL_MS) so it learns about us within a
         // round-trip — but no more often than this, to avoid reply storms.
         static const uint32_t REPLY_MIN_GAP_MS = 1000;
+        // Re-issue the IGMP join on this cadence. With no querier on the segment,
+        // an AP/switch doing IGMP snooping ages out its membership entry and
+        // silently stops forwarding the group to us; a periodic re-join sends a
+        // fresh membership report that keeps the forwarding path alive.
+        static const uint32_t MEMBERSHIP_REJOIN_MS = 120000;
         static const uint8_t CHECKSUM_SEED_MASTER = 0xAA;
         static const uint8_t CHECKSUM_SEED_BACKUP = 0x55;
 
@@ -96,6 +101,7 @@ namespace esphome
             uint32_t last_heartbeat_sent_ms_{0};
             uint32_t last_init_attempt_ms_{0};
             uint32_t socket_ready_ms_{0};
+            uint32_t last_rejoin_ms_{0};
             bool initialized_{false};
 
             bool effective_master_() const { return this->active_ && this->i_am_master_; }
@@ -108,6 +114,8 @@ namespace esphome
             socklen_t dest_addr_len_{0};
 
             bool init_socket_();
+            void rejoin_multicast_();
+            void close_socket_();
 #endif
 
             static uint8_t calculate_checksum_(const HeartbeatMessage &msg);
