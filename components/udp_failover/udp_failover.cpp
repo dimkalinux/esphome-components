@@ -69,6 +69,7 @@ namespace esphome
 
         void UdpFailoverComponent::evaluate_role_()
         {
+            bool had_peers = !this->peers_.empty();
             this->prune_dead_peers_();
 
             MacAddress lowest_mac = this->my_mac_;
@@ -80,6 +81,37 @@ namespace esphome
             }
 
             bool should_be_master = (lowest_mac == this->my_mac_);
+
+            if (!should_be_master)
+            {
+                // A lower-MAC peer is audible again — any pending promotion is moot.
+                this->promotion_grace_ = false;
+            }
+            else if (!this->i_am_master_)
+            {
+                // Every peer we knew went silent at once. That looks less like all
+                // of them dying simultaneously and more like our RX path dying
+                // (snooping entry flushed, AP rebooted). Refresh the membership
+                // and hold the promotion; if the master is alive we will hear it
+                // and stand down, if it is truly dead we only lose the grace time.
+                if (had_peers && this->peers_.empty() && !this->promotion_grace_)
+                {
+                    this->promotion_grace_ = true;
+                    this->promotion_grace_start_ms_ = millis();
+#ifdef USE_UDP_FAILOVER_SOCKETS
+                    this->rejoin_multicast_();
+                    this->last_rejoin_ms_ = millis();
+#endif
+                    ESP_LOGW(TAG, "All peers lost at once — suspecting RX failure, delaying promotion %ums", PROMOTION_GRACE_MS);
+                }
+                if (this->promotion_grace_)
+                {
+                    if ((millis() - this->promotion_grace_start_ms_) < PROMOTION_GRACE_MS)
+                        return;
+                    this->promotion_grace_ = false;
+                    ESP_LOGW(TAG, "Promotion grace elapsed with no peer heard — proceeding");
+                }
+            }
 
             if (should_be_master != this->i_am_master_)
             {
@@ -196,9 +228,17 @@ namespace esphome
             // which would not refresh the AP's snooping entry.
             this->socket_->setsockopt(IPPROTO_IP, IP_DROP_MEMBERSHIP, &imreq, sizeof(imreq));
             if (this->socket_->setsockopt(IPPROTO_IP, IP_ADD_MEMBERSHIP, &imreq, sizeof(imreq)) < 0)
-                ESP_LOGW(TAG, "Multicast re-join failed: errno %d", errno);
+            {
+                // A socket without membership is exactly the silent-RX state we
+                // are trying to kill — rebuild it from scratch rather than limp
+                // along deaf until the next rejoin attempt.
+                ESP_LOGW(TAG, "Multicast re-join failed (errno %d) — rebuilding socket", errno);
+                this->close_socket_();
+            }
             else
+            {
                 ESP_LOGD(TAG, "Multicast membership refreshed for %s", this->multicast_address_.c_str());
+            }
         }
 
         void UdpFailoverComponent::close_socket_()
@@ -210,11 +250,21 @@ namespace esphome
             // stale master.
             this->active_ = false;
             this->peers_.clear();
+            this->promotion_grace_ = false;
             this->publish_is_master_state_();
         }
 
+        // TODO(split-brain): capture the sender address with recvfrom() and keep a
+        // last-known unicast address per peer, then send heartbeats unicast to
+        // known peers in addition to the multicast. Unicast is ACKed at the WiFi
+        // layer and does not depend on IGMP snooping, which would remove the whole
+        // class of "multicast forwarding died" failures instead of patching
+        // around it.
         void UdpFailoverComponent::receive_packets_()
         {
+            if (this->socket_ == nullptr)
+                return;
+
             bool received_any = false;
             bool discovered_new = false;
             HeartbeatMessage msg;
@@ -248,6 +298,9 @@ namespace esphome
 
         void UdpFailoverComponent::send_heartbeat_()
         {
+            if (this->socket_ == nullptr)
+                return;
+
             HeartbeatMessage msg{};
             msg.group_id = this->group_id_hash_;
             memcpy(msg.mac, this->my_mac_.addr, 6);
@@ -312,6 +365,13 @@ namespace esphome
                 this->rejoin_multicast_();
                 this->last_rejoin_ms_ = now;
             }
+
+            // While in the startup hold, repeat the announce every second instead
+            // of trusting a single unacked multicast packet: if the lone boot
+            // announce is lost (common for multicast over WiFi), an existing
+            // master never replies and we would elect ourselves alongside it.
+            if (!this->active_ && (now - this->last_heartbeat_sent_ms_) >= REPLY_MIN_GAP_MS)
+                this->send_heartbeat_();
 
             // Stay passive until we have listened for the hold-down window, then
             // commit to the role we elected from whatever peers we heard.

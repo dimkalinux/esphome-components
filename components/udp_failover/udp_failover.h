@@ -46,6 +46,12 @@ namespace esphome
         // silently stops forwarding the group to us; a periodic re-join sends a
         // fresh membership report that keeps the forwarding path alive.
         static const uint32_t MEMBERSHIP_REJOIN_MS = 120000;
+        // When every known peer disappears at once, suspect our own RX path
+        // (snooping entry flushed, AP rebooted, re-join failed) rather than
+        // simultaneous peer death: refresh the IGMP membership and delay
+        // self-promotion this long, so a live master gets a full heartbeat
+        // interval to be heard again before we act alongside it.
+        static const uint32_t PROMOTION_GRACE_MS = 12000;
         static const uint8_t CHECKSUM_SEED_MASTER = 0xAA;
         static const uint8_t CHECKSUM_SEED_BACKUP = 0x55;
 
@@ -103,6 +109,8 @@ namespace esphome
             uint32_t socket_ready_ms_{0};
             uint32_t last_rejoin_ms_{0};
             bool initialized_{false};
+            bool promotion_grace_{false};
+            uint32_t promotion_grace_start_ms_{0};
 
             bool effective_master_() const { return this->active_ && this->i_am_master_; }
 
