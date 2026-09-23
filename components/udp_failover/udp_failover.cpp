@@ -1,5 +1,7 @@
 #include "udp_failover.h"
 
+#include <cinttypes>
+
 #ifdef USE_UDP_FAILOVER_SOCKETS
 #include "esphome/components/network/util.h"
 #include <cerrno>
@@ -44,7 +46,7 @@ namespace esphome
             this->peers_[peer_mac] = PeerState{msg.is_master != 0, millis()};
 
             this->log_mac_(is_new ? "New peer" : "Heartbeat from", peer_mac);
-            ESP_LOGD(TAG, "  master=%s, uptime=%us, peers_known=%d",
+            ESP_LOGD(TAG, "  master=%s, uptime=%" PRIu32 "s, peers_known=%zu",
                      msg.is_master ? "true" : "false", msg.uptime_sec, this->peers_.size());
             return is_new;
         }
@@ -102,7 +104,7 @@ namespace esphome
                     this->rejoin_multicast_();
                     this->last_rejoin_ms_ = millis();
 #endif
-                    ESP_LOGW(TAG, "All peers lost at once — suspecting RX failure, delaying promotion %ums", PROMOTION_GRACE_MS);
+                    ESP_LOGW(TAG, "All peers lost at once — suspecting RX failure, delaying promotion %" PRIu32 "ms", PROMOTION_GRACE_MS);
                 }
                 if (this->promotion_grace_)
                 {
