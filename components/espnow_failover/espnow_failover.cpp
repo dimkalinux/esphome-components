@@ -9,7 +9,10 @@ namespace esphome
 
         uint8_t EspNowFailoverComponent::calculate_checksum_(const HeartbeatMessage &msg)
         {
-            uint8_t cs = msg.is_master ? CHECKSUM_SEED_MASTER : CHECKSUM_SEED_BACKUP;
+            // Seeded on the whole flags byte being non-zero, as when it was a 0/1
+            // is_master byte, so nodes on either side of the FLAG_HELLO change
+            // still accept each other's frames during a one-by-one upgrade.
+            uint8_t cs = msg.flags ? CHECKSUM_SEED_MASTER : CHECKSUM_SEED_BACKUP;
             cs ^= (msg.group_id & 0xFF);
             cs ^= ((msg.group_id >> 8) & 0xFF);
 
@@ -62,7 +65,7 @@ namespace esphome
             local_queue.swap(this->receive_queue_);
             portEXIT_CRITICAL(&this->queue_mutex_);
 
-            bool discovered_new = false;
+            bool needs_answer = false;
 
             for (const auto &msg : local_queue)
             {
@@ -73,13 +76,15 @@ namespace esphome
                     continue;
 
                 bool is_new = this->peers_.find(peer_mac) == this->peers_.end();
-                this->peers_[peer_mac] = PeerState{msg.is_master != 0, millis()};
-                if (is_new)
-                    discovered_new = true;
+                bool is_master = (msg.flags & FLAG_MASTER) != 0;
+                bool is_hello = (msg.flags & FLAG_HELLO) != 0;
+                this->peers_[peer_mac] = PeerState{is_master, millis()};
+                if (is_new || is_hello)
+                    needs_answer = true;
 
-                this->log_mac_(is_new ? "New peer" : "Heartbeat from", peer_mac);
+                this->log_mac_(is_new ? "New peer" : (is_hello ? "Hello from" : "Heartbeat from"), peer_mac);
                 ESP_LOGD(TAG, "  master=%s, uptime=%us, peers_known=%d",
-                         msg.is_master ? "true" : "false", msg.uptime_sec, this->peers_.size());
+                         is_master ? "true" : "false", msg.uptime_sec, this->peers_.size());
             }
 
             if (!local_queue.empty())
@@ -87,10 +92,12 @@ namespace esphome
                 this->evaluate_role_();
             }
 
-            // Answer a newly-discovered peer promptly so it learns about us within
-            // a round-trip instead of waiting up to one heartbeat interval. The gap
-            // guard stops two devices from echoing each other indefinitely.
-            if (discovered_new && (millis() - this->last_heartbeat_sent_ms_) >= REPLY_MIN_GAP_MS)
+            // Answer a new peer, or any peer still in its startup hold, promptly
+            // so it learns about us within a round-trip instead of waiting up to
+            // one heartbeat interval. The gap guard stops two devices from
+            // echoing each other indefinitely; a holding peer keeps bursting
+            // hellos, so one skipped by the guard gets the next.
+            if (needs_answer && (millis() - this->last_heartbeat_sent_ms_) >= REPLY_MIN_GAP_MS)
                 this->start_heartbeat_burst_();
         }
 
@@ -186,7 +193,7 @@ namespace esphome
             HeartbeatMessage msg{};
             msg.group_id = this->group_id_hash_;
             memcpy(msg.mac, this->my_mac_.addr, 6);
-            msg.is_master = this->i_am_master_;
+            msg.flags = (this->i_am_master_ ? FLAG_MASTER : 0) | (this->active_ ? 0 : FLAG_HELLO);
             msg.uptime_sec = millis() / 1000;
             msg.checksum = calculate_checksum_(msg);
 
@@ -304,11 +311,14 @@ namespace esphome
                 ESP_LOGI(TAG, "Startup hold elapsed — now active as %s", this->effective_master_() ? "MASTER" : "BACKUP");
             }
 
-            if ((now - this->last_heartbeat_sent_ms_) >= HEARTBEAT_INTERVAL_MS)
+            if ((now - this->last_evaluate_ms_) >= EVALUATE_INTERVAL_MS)
             {
+                this->last_evaluate_ms_ = now;
                 this->evaluate_role_();
-                this->start_heartbeat_burst_();
             }
+
+            if ((now - this->last_heartbeat_sent_ms_) >= HEARTBEAT_INTERVAL_MS)
+                this->start_heartbeat_burst_();
         }
 
     }

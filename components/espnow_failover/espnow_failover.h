@@ -34,6 +34,10 @@ namespace esphome
         // long so a live master gets a full heartbeat interval (one burst) to be
         // heard again before we act alongside it.
         static const uint32_t PROMOTION_GRACE_MS = 12000;
+        // Peer timeouts and the promotion grace are checked on this cadence,
+        // not on the heartbeat tick, so a 12 s grace lasts ~12 s instead of
+        // being rounded up to two 10 s ticks.
+        static const uint32_t EVALUATE_INTERVAL_MS = 1000;
         // Connectionless-module power save: instead of holding the radio in
         // continuous RX (which makes a naive ESP-NOW receiver run ~10 °C
         // hotter), the radio listens only WAKE_WINDOW_MS out of every
@@ -51,6 +55,14 @@ namespace esphome
         static const uint8_t MAX_RECEIVE_QUEUE_SIZE = 10;
         static const uint8_t CHECKSUM_SEED_MASTER = 0xAA;
         static const uint8_t CHECKSUM_SEED_BACKUP = 0x55;
+        // HeartbeatMessage::flags bits.
+        static const uint8_t FLAG_MASTER = 0x01;
+        // Set while the sender is in its startup hold. Receivers answer every
+        // hello, not only ones from unknown peers: a node that rebooted within
+        // FAILOVER_TIMEOUT_MS is still in their peer table, and without an
+        // answer its hold would elapse before the next regular heartbeat and it
+        // would elect itself alongside the live master.
+        static const uint8_t FLAG_HELLO = 0x02;
 
         struct MacAddress
         {
@@ -65,7 +77,7 @@ namespace esphome
         {
             uint16_t group_id;
             uint8_t mac[6];
-            uint8_t is_master;
+            uint8_t flags;  // FLAG_MASTER | FLAG_HELLO; was a 0/1 is_master byte
             uint32_t uptime_sec;
             uint8_t checksum;
         };
@@ -100,6 +112,7 @@ namespace esphome
             bool active_{false};
             uint32_t last_heartbeat_sent_ms_{0};
             uint32_t init_done_ms_{0};
+            uint32_t last_evaluate_ms_{0};
             bool espnow_initialized_{false};
             bool promotion_grace_{false};
             uint32_t promotion_grace_start_ms_{0};

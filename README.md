@@ -61,7 +61,7 @@ All options from [Binary Sensor](https://esphome.io/components/binary_sensor/) a
 1. On startup, each node initializes ESP-NOW and begins broadcasting heartbeat messages every **10 seconds**.
 2. Heartbeats contain the sender's MAC address, current role, and uptime.
 3. Each node tracks all known peers. If a peer hasn't sent a heartbeat within **30 seconds**, it is considered dead and pruned.
-4. After each heartbeat cycle, the node with the **lowest MAC address** among all live peers (including itself) becomes the master.
+4. Once a second, the node with the **lowest MAC address** among all live peers (including itself) becomes the master.
 
 #### Checking Role in Lambdas
 
@@ -143,7 +143,7 @@ All options from [Binary Sensor](https://esphome.io/components/binary_sensor/) a
 
 1. Once WiFi is connected, each node joins the multicast group and **immediately announces itself**, then broadcasts a heartbeat every **10 seconds**. Heartbeats carry the sender's MAC address, current role, and uptime.
 2. For a short **startup hold-down** (~3 seconds) the node stays passive — `is_master()` returns `false` — while it listens. This guarantees that devices powering on at the same time discover each other and agree on a single master *before* any of them acts, avoiding a split-brain where two nodes both run a master-only action at boot.
-3. When a node hears a previously-unknown peer it answers right away (**reply-on-discovery**), so a freshly-booted device is learned within a round-trip instead of waiting up to a full heartbeat interval.
+3. When a node hears a previously-unknown peer, or any peer whose heartbeat is flagged as still in its hold-down, it answers right away (**reply-on-discovery**), so a freshly-booted device is learned within a round-trip instead of waiting up to a full heartbeat interval. The hold-down flag matters for a node that reboots or reconnects within 30 seconds: its peers still know it, and without the flag they would not answer before its hold-down ran out.
 4. Each node tracks all known peers. A peer that hasn't been heard from within **30 seconds** is considered dead and pruned.
 5. The node with the **lowest MAC address** among all live peers (including itself) becomes the master. The worst case during a transition is a single skipped action — never a duplicated one.
 

@@ -52,8 +52,20 @@ namespace esphome
         // self-promotion this long, so a live master gets a full heartbeat
         // interval to be heard again before we act alongside it.
         static const uint32_t PROMOTION_GRACE_MS = 12000;
+        // Peer timeouts and the promotion grace are checked on this cadence,
+        // not on the heartbeat tick, so a 12 s grace lasts ~12 s instead of
+        // being rounded up to two 10 s ticks.
+        static const uint32_t EVALUATE_INTERVAL_MS = 1000;
         static const uint8_t CHECKSUM_SEED_MASTER = 0xAA;
         static const uint8_t CHECKSUM_SEED_BACKUP = 0x55;
+        // HeartbeatMessage::flags bits.
+        static const uint8_t FLAG_MASTER = 0x01;
+        // Set while the sender is in its startup hold. Receivers answer every
+        // hello, not only ones from unknown peers: a node that rebooted or
+        // reconnected within FAILOVER_TIMEOUT_MS is still in their peer table,
+        // and without an answer its hold would elapse before the next regular
+        // heartbeat and it would elect itself alongside the live master.
+        static const uint8_t FLAG_HELLO = 0x02;
 
         struct MacAddress
         {
@@ -68,7 +80,7 @@ namespace esphome
         {
             uint16_t group_id;
             uint8_t mac[6];
-            uint8_t is_master;
+            uint8_t flags;  // FLAG_MASTER | FLAG_HELLO; was a 0/1 is_master byte
             uint32_t uptime_sec;
             uint8_t checksum;
         };
@@ -108,6 +120,7 @@ namespace esphome
             uint32_t last_init_attempt_ms_{0};
             uint32_t socket_ready_ms_{0};
             uint32_t last_rejoin_ms_{0};
+            uint32_t last_evaluate_ms_{0};
             bool initialized_{false};
             bool promotion_grace_{false};
             uint32_t promotion_grace_start_ms_{0};
@@ -131,7 +144,7 @@ namespace esphome
 
             void send_heartbeat_();
             void receive_packets_();
-            bool handle_message_(const HeartbeatMessage &msg);
+            bool handle_message_(const HeartbeatMessage &msg);  // true if the sender needs an answer
             void evaluate_role_();
             void prune_dead_peers_();
             void log_mac_(const char *prefix, const MacAddress &mac);
